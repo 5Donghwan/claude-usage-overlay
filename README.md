@@ -6,6 +6,8 @@ Claude 데스크톱 앱의 채팅 입력창 위에 5시간/주간 사용량 바�
 > Anthropic). "Claude"·"Anthropic"은 Anthropic, PBC의 상표다. 자세한 조건은
 > [LICENSE](LICENSE) 참고.
 
+![스크린샷: Claude 입력창 아래 5h/7d 사용량 바](docs/screenshot.png)
+
 - Claude.app은 전혀 수정하지 않는다. 별도 백그라운드 앱(NSPanel)이 위에 겹쳐 그린다.
 - 데이터: `~/Library/Application Support/Claude/plan-usage-history.json` —
   Claude 앱 자신이 5분마다 갱신하는 파일 (`u.fh` = 5시간 %, `u.sd` = 주간 %).
