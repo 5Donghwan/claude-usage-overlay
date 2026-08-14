@@ -6,12 +6,14 @@ Claude 데스크톱 앱의 채팅 입력창 위에 5시간/주간 사용량 바�
 > Anthropic). "Claude"·"Anthropic"은 Anthropic, PBC의 상표다. 자세한 조건은
 > [LICENSE](LICENSE) 참고.
 
-![스크린샷: Claude 입력창 아래 5h/7d 사용량 바](docs/screenshot.png)
+![스크린샷: Claude 입력창 아래 5h / 7d / Fable 사용량 바](docs/screenshot.png)
 
 - Claude.app은 전혀 수정하지 않는다. 별도 백그라운드 앱(NSPanel)이 위에 겹쳐 그린다.
 - 데이터: `~/Library/Application Support/Claude/plan-usage-history.json` —
   Claude 앱 자신이 5분마다 갱신하는 파일 (`u.fh` = 5시간 %, `u.sd` = 주간 %).
   API 호출·스크래핑 없음. 90분 이상 오래된 샘플은 `--`로 표시.
+- 바는 **2개(`5h`/`7d`)** 또는 **3개(+ 모델별 한도)** 중에 고를 수 있다.
+  기본은 3개이며, 바꾸는 법은 아래 "바 2개 vs 3개" 참고.
 - 위치: 접근성(AX) API로 Claude 창의 입력창 좌표를 0.1초마다 읽어 자동 추적.
   창 이동/리사이즈, 우측 패널 크기 변경, 입력창 여러 줄 확장 모두 따라감.
 - Claude가 맨 앞 앱일 때만 표시. 클릭은 전부 통과(입력창 조작 방해 없음).
@@ -21,6 +23,7 @@ Claude 데스크톱 앱의 채팅 입력창 위에 5시간/주간 사용량 바�
 - macOS 14 이상
 - Xcode Command Line Tools (`swift build`가 되면 충분 — `xcode-select --install`)
 - Node.js (폰트를 Claude 앱과 동일하게 맞추고 싶을 때만 필요, 선택)
+- `zstd` (모델별 한도 바를 쓰고 싶을 때만 필요, 선택 — `brew install zstd`)
 - Claude 데스크톱 앱이 `/Applications/Claude.app`에 설치돼 있을 것
 
 ## 빌드 & 실행
@@ -69,11 +72,61 @@ open dist/ClaudeUsageOverlay.app
 | `valueFont` | `AnthropicSansVariable-TextRegular` | 퍼센트 수치 폰트 |
 | `titleSize` | 12 | 라벨 크기 |
 | `valueSize` | 12 | 수치 크기 |
+| `showModelLimits` | true | 모델별 주간 한도 바 표시 (아래 참고). `false`면 5h/7d만 |
 
 `titleFont`/`valueFont`로 지정 가능한 이름은 `scripts/extract-fonts.mjs` 실행 후
 `AnthropicSansVariable-Text{Regular,Medium,Semibold,Bold,Extrabold,Light}`
 (Italic 계열도 동일 패턴). 폰트를 추출하지 않았다면 이 값은 무시되고 시스템 폰트로
 자동 대체된다.
+
+## 바 2개 vs 3개
+
+| | 표시 | 설정 | 추가 조건 |
+|---|---|---|---|
+| **3개 (기본)** | `5h` `7d` `Fable` | 그대로 두면 된다 | `zstd` 필요 (`brew install zstd`) |
+| **2개** | `5h` `7d` | `tunables.json`에 아래 한 줄 | 없음 |
+
+2개만 쓰려면 프로젝트 루트에 `tunables.json`을 만들고:
+
+```json
+{ "showModelLimits": false }
+```
+
+15초 안에 반영되고 재빌드·재시작은 필요 없다. 다시 3개로 돌리려면 `true`로 바꾸거나
+그 줄을 지우면 된다.
+
+3개로 두고 싶은데 세 번째 바가 안 뜬다면 대부분 아래 둘 중 하나다:
+
+- **`zstd`가 없다** → `brew install zstd` 후 몇 초 기다린다
+- **플랜에 모델별 한도가 없다** → 이 경우엔 바가 뜰 수 없다. 표시할 값 자체가 없으므로
+  2개 구성이 정상이다
+
+어느 쪽이든 `5h`/`7d`는 영향받지 않는다. 확인은 로그로:
+
+```bash
+grep "model limits" ~/Library/Logs/ClaudeUsageOverlay.log
+```
+
+## 모델별 한도가 동작하는 방식
+
+플랜에 모델별 주간 한도가 걸려 있으면 `5h`/`7d` 옆에 모델 이름이 붙은 바가 자동으로
+하나 더 생긴다 (예: `Fable 49%`). 모델이 여러 개면 그만큼 바가 늘어나고, 새 모델이
+추가돼도 서버가 내려주는 이름을 그대로 쓰므로 코드 수정 없이 따라간다.
+
+**이 값만 데이터 출처가 다르다.** Claude 앱은 `/api/organizations/<org>/usage` 응답의
+`limits[]` 배열로 이 수치를 받는데, `plan-usage-history.json`에는 저장하지 않는다
+(레거시 고정 키 8개만 저장하고, 모델별 항목은 전부 `null`로 내려온다). 그래서 이
+바만은 Chromium HTTP 캐시(`~/Library/Application Support/Claude/Cache/Cache_Data`)에
+남은 **응답 본문**을 읽는다. 쿠키·토큰 등 인증 정보는 일절 건드리지 않으며, 읽기
+전용이고 네트워크 요청도 하지 않는다.
+
+캐시 본문은 보통 **zstd** 압축인데 macOS는 zstd를 기본 제공하지 않는다 (Compression
+프레임워크에 없고 시스템 libzstd도 없음). 앞서 말한 `brew install zstd`가 필요한 게
+이 때문이다.
+
+이 경로는 전 구간이 best-effort로 짜여 있다 — `zstd` 부재, 캐시 형식 변경, 항목 만료,
+해제 실패 등 무엇이 어긋나도 이 바만 조용히 사라지고 `5h`/`7d`에는 영향이 없다.
+Chromium 캐시 형식은 비공개라 Claude 앱 업데이트로 깨질 수 있는데, 그때도 마찬가지다.
 
 ## 폰트
 

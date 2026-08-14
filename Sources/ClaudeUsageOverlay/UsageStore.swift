@@ -24,11 +24,18 @@ struct Tunables: Decodable, Equatable {
     var titleSize: CGFloat = 12
     var valueSize: CGFloat = 12
 
-    var panelW: CGFloat { barW * 2 + groupGap + sidePad * 2 }
+    /// Show an extra bar per model-scoped weekly limit (e.g. "Fable"), when one
+    /// is available. See LimitsCache for why this can silently stay hidden.
+    var showModelLimits = true
+
+    func panelW(bars: Int) -> CGFloat {
+        let n = max(1, bars)
+        return barW * CGFloat(n) + groupGap * CGFloat(n - 1) + sidePad * 2
+    }
 
     private enum CodingKeys: String, CodingKey {
         case barW, groupGap, panelH, sidePad, scale, centerAboveBottom
-        case titleFont, valueFont, titleSize, valueSize
+        case titleFont, valueFont, titleSize, valueSize, showModelLimits
     }
 
     init() {}
@@ -46,6 +53,7 @@ struct Tunables: Decodable, Equatable {
         valueFont = try c.decodeIfPresent(String.self, forKey: .valueFont) ?? d.valueFont
         titleSize = try c.decodeIfPresent(CGFloat.self, forKey: .titleSize) ?? d.titleSize
         valueSize = try c.decodeIfPresent(CGFloat.self, forKey: .valueSize) ?? d.valueSize
+        showModelLimits = try c.decodeIfPresent(Bool.self, forKey: .showModelLimits) ?? d.showModelLimits
     }
 }
 
@@ -54,7 +62,11 @@ struct Tunables: Decodable, Equatable {
 final class UsageStore: ObservableObject {
     @Published private(set) var fiveHour: Double?
     @Published private(set) var sevenDay: Double?
+    @Published private(set) var modelLimits: [ModelLimit] = []
     @Published private(set) var tun = Tunables()
+
+    /// Total bars currently rendered — drives the panel width.
+    var barCount: Int { 2 + modelLimits.count }
 
     /// Samples older than this are treated as unknown ("--").
     private let staleAfter: TimeInterval = 90 * 60
@@ -63,6 +75,7 @@ final class UsageStore: ObservableObject {
         .appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json")
     private let tunablesPath: URL
     private var timer: Timer?
+    private var limitsTimer: Timer?
 
     init(projectDir: URL) {
         tunablesPath = projectDir.appendingPathComponent("tunables.json")
@@ -74,6 +87,34 @@ final class UsageStore: ObservableObject {
             self?.refresh()
         }
         timer?.tolerance = 5
+
+        // Heavier than the history-file read (scans the HTTP cache and shells
+        // out to zstd), and the app only refetches every ~4.5 min, so poll it
+        // far less often and off the main thread.
+        refreshModelLimits()
+        limitsTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.refreshModelLimits()
+        }
+        limitsTimer?.tolerance = 15
+    }
+
+    private func refreshModelLimits() {
+        guard tun.showModelLimits else {
+            if !modelLimits.isEmpty { modelLimits = [] }
+            return
+        }
+        let cutoff = staleAfter
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let found = LimitsCache.modelLimits(staleAfter: cutoff) ?? []
+            DispatchQueue.main.async {
+                guard let self, self.modelLimits != found else { return }
+                if !found.isEmpty {
+                    let desc = found.map { "\($0.name)=\(Int($0.percent))%" }.joined(separator: " ")
+                    Log.once("model limits: \(desc)")
+                }
+                self.modelLimits = found
+            }
+        }
     }
 
     private struct History: Decodable {
@@ -136,5 +177,17 @@ enum Log {
         } else {
             try? line.write(to: path, atomically: true, encoding: .utf8)
         }
+    }
+
+    private static var seen = Set<String>()
+    private static let seenLock = NSLock()
+
+    /// Log a message only the first time it appears — for state polled on a
+    /// timer, where repeating the same line every minute would bury the log.
+    static func once(_ msg: String) {
+        seenLock.lock()
+        let isNew = seen.insert(msg).inserted
+        seenLock.unlock()
+        if isNew { write(msg) }
     }
 }

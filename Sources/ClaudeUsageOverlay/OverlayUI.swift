@@ -43,10 +43,15 @@ struct OverlayView: View {
         HStack(spacing: t.groupGap) {
             BarGroup(title: "5h", pct: store.fiveHour, tun: t)
             BarGroup(title: "7d", pct: store.sevenDay, tun: t)
+            // One extra bar per model-scoped weekly limit the API reports
+            // (e.g. "Fable"), so new ones appear without a code change.
+            ForEach(store.modelLimits, id: \.name) { limit in
+                BarGroup(title: limit.name, pct: limit.percent, tun: t)
+            }
         }
         .padding(.horizontal, t.sidePad)
         .scaleEffect(t.scale, anchor: .center)
-        .frame(width: t.panelW, height: t.panelH)
+        .frame(width: t.panelW(bars: store.barCount), height: t.panelH)
     }
 }
 
@@ -72,7 +77,7 @@ final class OverlayController: NSObject {
     private func makePanel() {
         let t = store.tun
         let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: t.panelW, height: t.panelH),
+            contentRect: NSRect(x: 0, y: 0, width: t.panelW(bars: store.barCount), height: t.panelH),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -122,15 +127,16 @@ final class OverlayController: NSObject {
         }
 
         let t = store.tun
+        let panelW = t.panelW(bars: store.barCount)
         let centerYAX = placement.anchorBottom - t.centerAboveBottom
         let topAX = centerYAX - t.panelH / 2
-        let x = placement.inputFrame.midX - t.panelW / 2
+        let x = placement.inputFrame.midX - panelW / 2
 
         // AX coords have a top-left origin on the primary display; AppKit a bottom-left one.
         guard let primary = NSScreen.screens.first else { return }
         let y = primary.frame.maxY - (topAX + t.panelH)
 
-        let frame = NSRect(x: x, y: y, width: t.panelW, height: t.panelH)
+        let frame = NSRect(x: x, y: y, width: panelW, height: t.panelH)
         if panel.frame != frame {
             panel.setFrame(frame, display: true)
         }
