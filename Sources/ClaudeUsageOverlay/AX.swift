@@ -52,8 +52,9 @@ final class ClaudeTracker {
     private var loggedFind = false
 
     struct Placement {
-        let inputFrame: CGRect     // AX coords (top-left origin)
-        let anchorBottom: CGFloat  // bottom edge of the input container, AX coords
+        let inputFrame: CGRect      // AX coords (top-left origin)
+        let anchorBottom: CGFloat   // bottom edge of the input container, AX coords
+        let container: AXUIElement? // composer container, for the overlap check
     }
 
     func claudeApp() -> NSRunningApplication? {
@@ -89,7 +90,8 @@ final class ClaudeTracker {
 
         // Fast path: cached element still alive — just re-read its frame.
         if let el = inputEl, let f = axFrame(el), f.width >= 200 {
-            return Placement(inputFrame: f, anchorBottom: containerBottom(for: el, inputFrame: f))
+            let c = composer(for: el, inputFrame: f)
+            return Placement(inputFrame: f, anchorBottom: c.bottom, container: c.container)
         }
         inputEl = nil
 
@@ -105,7 +107,8 @@ final class ClaudeTracker {
             Log.write("input area found at \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))")
             loggedFind = true
         }
-        return Placement(inputFrame: f, anchorBottom: containerBottom(for: el, inputFrame: f))
+        let c = composer(for: el, inputFrame: f)
+        return Placement(inputFrame: f, anchorBottom: c.bottom, container: c.container)
     }
 
     /// BFS for the chat input: a wide text area in the lower part of the window.
@@ -134,23 +137,61 @@ final class ClaudeTracker {
         return best.map { ($0.el, $0.frame) }
     }
 
+    func containerBottom(for input: AXUIElement, inputFrame f: CGRect) -> CGFloat {
+        composer(for: input, inputFrame: f).bottom
+    }
+
     /// The visual "input box" extends below the text area (toolbar row with
     /// model picker etc.). Find the ancestor group that adds that row; fall
     /// back to a fixed toolbar-height estimate.
-    func containerBottom(for input: AXUIElement, inputFrame f: CGRect) -> CGFloat {
+    ///
+    /// The element is returned as well: it is the subtree that holds the toolbar
+    /// controls, which is what the overlap check searches.
+    func composer(for input: AXUIElement, inputFrame f: CGRect) -> (bottom: CGFloat, container: AXUIElement?) {
         var el = input
+        var widest: AXUIElement?
         for _ in 0..<8 {
             guard let parent = axElement(el, kAXParentAttribute) else { break }
             if let pf = axFrame(parent) {
                 let extend = pf.maxY - f.maxY
                 if extend > 110 || pf.width > f.width + 200 { break }
+                widest = parent
                 if extend >= 14 && pf.width < f.width * 1.5 {
-                    return pf.maxY
+                    return (pf.maxY, parent)
                 }
             }
             el = parent
         }
-        return f.maxY + 48
+        return (f.maxY + 48, widest)
+    }
+
+    /// Frames of toolbar controls (model picker, buttons, labels) that sit in the
+    /// same horizontal band the overlay wants to occupy.
+    ///
+    /// The composer layout differs per surface — on the chat surface the model
+    /// selector sits where the code surface leaves empty space — so rather than
+    /// trying to identify which surface is showing, just look at what is actually
+    /// in the way.
+    func toolbarFrames(in container: AXUIElement, band: ClosedRange<CGFloat>) -> [CGRect] {
+        var queue: [AXUIElement] = [container]
+        var index = 0
+        var out: [CGRect] = []
+        while index < queue.count && queue.count < 1200 {
+            let el = queue[index]
+            index += 1
+            if let role = axString(el, kAXRoleAttribute),
+               let f = axFrame(el),
+               f.width > 0, f.height > 0,
+               // Only leaf-ish controls; groups wrap everything and would always hit.
+               role == "AXButton" || role == "AXPopUpButton" || role == "AXStaticText"
+                || role == "AXMenuButton" || role == "AXComboBox" || role == "AXCheckBox"
+                || role == "AXRadioButton" || role == "AXImage",
+               f.midY >= band.lowerBound, f.midY <= band.upperBound {
+                out.append(f)
+            }
+            queue.append(contentsOf: axElements(el, kAXChildrenAttribute))
+        }
+        return out
     }
 }
 

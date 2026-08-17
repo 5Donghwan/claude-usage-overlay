@@ -28,6 +28,17 @@ struct Tunables: Decodable, Equatable {
     /// is available. See LimitsCache for why this can silently stay hidden.
     var showModelLimits = true
 
+    /// Usage percentages at which a bar turns yellow, then red. Defaults follow
+    /// the server's own severity boundary — see Palette.fill(for:).
+    var warnAt: Double = 75
+    var dangerAt: Double = 90
+
+    /// Hide instead of drawing on top of composer controls. The chat surface
+    /// puts its model picker where the code surface leaves a gap, so without
+    /// this the bars collide there.
+    var hideOnOverlap = true
+    var overlapMargin: CGFloat = 8
+
     func panelW(bars: Int) -> CGFloat {
         let n = max(1, bars)
         return barW * CGFloat(n) + groupGap * CGFloat(n - 1) + sidePad * 2
@@ -36,6 +47,7 @@ struct Tunables: Decodable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case barW, groupGap, panelH, sidePad, scale, centerAboveBottom
         case titleFont, valueFont, titleSize, valueSize, showModelLimits
+        case warnAt, dangerAt, hideOnOverlap, overlapMargin
     }
 
     init() {}
@@ -54,6 +66,10 @@ struct Tunables: Decodable, Equatable {
         titleSize = try c.decodeIfPresent(CGFloat.self, forKey: .titleSize) ?? d.titleSize
         valueSize = try c.decodeIfPresent(CGFloat.self, forKey: .valueSize) ?? d.valueSize
         showModelLimits = try c.decodeIfPresent(Bool.self, forKey: .showModelLimits) ?? d.showModelLimits
+        warnAt = try c.decodeIfPresent(Double.self, forKey: .warnAt) ?? d.warnAt
+        dangerAt = try c.decodeIfPresent(Double.self, forKey: .dangerAt) ?? d.dangerAt
+        hideOnOverlap = try c.decodeIfPresent(Bool.self, forKey: .hideOnOverlap) ?? d.hideOnOverlap
+        overlapMargin = try c.decodeIfPresent(CGFloat.self, forKey: .overlapMargin) ?? d.overlapMargin
     }
 }
 

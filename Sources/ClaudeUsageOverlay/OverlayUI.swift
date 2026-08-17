@@ -24,7 +24,7 @@ struct BarGroup: View {
                 if let pct {
                     GeometryReader { geo in
                         Capsule()
-                            .fill(Color(nsColor: .systemGreen))
+                            .fill(Palette.fill(for: pct, warnAt: tun.warnAt, dangerAt: tun.dangerAt))
                             .frame(width: geo.size.width * min(max(pct, 0), 100) / 100)
                     }
                 }
@@ -62,6 +62,9 @@ final class OverlayController: NSObject {
     private let tracker = ClaudeTracker()
     private var panel: NSPanel!
     private var pollTimer: Timer?
+    private var lastOverlapScan = Date.distantPast
+    private var cachedObstacles: [CGRect] = []
+    private var overlapping = false
 
     init(projectDir: URL) {
         store = UsageStore(projectDir: projectDir)
@@ -132,6 +135,24 @@ final class OverlayController: NSObject {
         let topAX = centerYAX - t.panelH / 2
         let x = placement.inputFrame.midX - panelW / 2
 
+        // The composer's layout differs per surface: on the chat surface the
+        // model picker sits exactly where the code surface leaves a gap. Rather
+        // than guess which surface is up, hide whenever a real control is in the
+        // way — that also survives future layout changes.
+        let panelAX = CGRect(x: x, y: topAX, width: panelW, height: t.panelH)
+        if t.hideOnOverlap, isBlocked(panelAX, placement: placement, tun: t) {
+            if !overlapping {
+                overlapping = true
+                Log.write("hidden: overlay would overlap composer controls")
+            }
+            hide()
+            return
+        }
+        if overlapping {
+            overlapping = false
+            Log.write("shown: composer has room again")
+        }
+
         // AX coords have a top-left origin on the primary display; AppKit a bottom-left one.
         guard let primary = NSScreen.screens.first else { return }
         let y = primary.frame.maxY - (topAX + t.panelH)
@@ -143,6 +164,19 @@ final class OverlayController: NSObject {
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
+    }
+
+    /// True when any toolbar control intrudes into the overlay's rect.
+    private func isBlocked(_ panelAX: CGRect, placement: ClaudeTracker.Placement, tun: Tunables) -> Bool {
+        guard let container = placement.container else { return false }
+        // Walking the subtree is far too costly at the 10 Hz position rate.
+        if Date().timeIntervalSince(lastOverlapScan) > 0.5 {
+            lastOverlapScan = Date()
+            let band = panelAX.minY...panelAX.maxY
+            cachedObstacles = tracker.toolbarFrames(in: container, band: band)
+        }
+        let padded = panelAX.insetBy(dx: -tun.overlapMargin, dy: 0)
+        return cachedObstacles.contains { $0.intersects(padded) }
     }
 
     private func hide() {
