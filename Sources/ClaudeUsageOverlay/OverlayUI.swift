@@ -1,6 +1,45 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Explicit dark-mode tracking
+//
+// The panel never sets an explicit .appearance, so in principle AppKit's
+// automatic effectiveAppearance cascade should keep .primary/.secondary
+// correct on its own — verified in isolation (fresh process, real font):
+// dark mode renders bright text, light mode renders dark text, live, no
+// restart needed. But a long-lived, always-background NSPanel that never
+// becomes key can apparently still miss that cascade in practice (observed:
+// text stayed black over a dark composer after weeks of uptime). Rather than
+// depend on an implicit mechanism that seems to degrade over time for this
+// specific panel shape, watch the system notification directly and force
+// SwiftUI's color scheme via an explicit environment override — that always
+// triggers a body re-evaluation, independent of whatever AppKit's own
+// cascade is or isn't doing.
+final class AppearanceWatcher: ObservableObject {
+    @Published private(set) var isDark: Bool
+    private var observer: NSObjectProtocol?
+
+    init() {
+        isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        observer = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            if self?.isDark != dark {
+                self?.isDark = dark
+                Log.write("system appearance changed: dark=\(dark)")
+            }
+        }
+    }
+
+    deinit {
+        if let observer {
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
+    }
+}
+
 // MARK: - SwiftUI content
 
 struct BarGroup: View {
@@ -37,6 +76,7 @@ struct BarGroup: View {
 
 struct OverlayView: View {
     @ObservedObject var store: UsageStore
+    @ObservedObject var appearance: AppearanceWatcher
 
     var body: some View {
         let t = store.tun
@@ -52,6 +92,9 @@ struct OverlayView: View {
         .padding(.horizontal, t.sidePad)
         .scaleEffect(t.scale, anchor: .center)
         .frame(width: t.panelW(bars: store.barCount), height: t.panelH)
+        // Explicit override — see AppearanceWatcher for why this doesn't just
+        // rely on the panel's implicit effectiveAppearance inheritance.
+        .environment(\.colorScheme, appearance.isDark ? .dark : .light)
     }
 }
 
@@ -59,6 +102,7 @@ struct OverlayView: View {
 
 final class OverlayController: NSObject {
     private let store: UsageStore
+    private let appearance = AppearanceWatcher()
     private let tracker = ClaudeTracker()
     private var panel: NSPanel!
     private var pollTimer: Timer?
@@ -93,7 +137,7 @@ final class OverlayController: NSObject {
         p.hidesOnDeactivate = false          // visibility is managed by the poll loop
         p.isReleasedWhenClosed = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        p.contentView = NSHostingView(rootView: OverlayView(store: store))
+        p.contentView = NSHostingView(rootView: OverlayView(store: store, appearance: appearance))
         panel = p
     }
 
