@@ -4,16 +4,23 @@ import Combine
 // MARK: - Geometry tunables (overridable at runtime via tunables.json)
 
 struct Tunables: Decodable, Equatable {
-    // Empirically calibrated (2026-07-23) against Claude.app's own composer
-    // toolbar so the overlay sits at the same height/weight as the model name
-    // and effort-level label next to it. Override any of these via
-    // tunables.json without rebuilding.
+    // Empirically calibrated against Claude.app's own composer toolbar so the
+    // overlay sits at the same height/weight as the model name and
+    // effort-level label next to it. Override any of these via tunables.json
+    // without rebuilding.
     var barW: CGFloat = 86             // 기준 100에서 10%+ 축소
     var groupGap: CGFloat = 18
     var panelH: CGFloat = 30
     var sidePad: CGFloat = 4
     var scale: CGFloat = 1.0
-    var centerAboveBottom: CGFloat = 19  // 입력창 컨테이너 하단 → 오버레이 중심
+    // 2026-09-02: re-measured directly against the model/effort AXPopUpButton
+    // frames (y=924 h=23 -> center 935.5) after Claude.app 1.40609.1 shrank the
+    // composer toolbar band from 34px to 29px, which had pushed the overlay
+    // above the row it's meant to align with. Re-derive the same way if a
+    // future Claude update shifts this again: probe the live AX tree for the
+    // model-name/effort AXPopUpButton y+height, then
+    // centerAboveBottom = containerBottom - thatCenter.
+    var centerAboveBottom: CGFloat = 11.5  // 입력창 컨테이너 하단 → 오버레이 중심
 
     // Named instances of the variable font extracted from Claude.app, so the
     // overlay text matches the app's own UI face (its composer toolbar labels
