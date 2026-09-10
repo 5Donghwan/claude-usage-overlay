@@ -48,13 +48,15 @@ final class ClaudeTracker {
     private var pid: pid_t = -1
     private var appEl: AXUIElement?
     private var inputEl: AXUIElement?
+    private var toolbarEls: [AXUIElement] = []
     private var lastSearch = Date.distantPast
     private var loggedFind = false
 
     struct Placement {
-        let inputFrame: CGRect      // AX coords (top-left origin)
-        let anchorBottom: CGFloat   // bottom edge of the input container, AX coords
-        let container: AXUIElement? // composer container, for the overlap check
+        let inputFrame: CGRect        // AX coords (top-left origin)
+        let anchorBottom: CGFloat     // bottom edge of the input container, AX coords
+        let container: AXUIElement?   // composer container, for the overlap check
+        let toolbarCenterY: CGFloat?  // direct anchor: model/effort row's own center, when found
     }
 
     func claudeApp() -> NSRunningApplication? {
@@ -71,11 +73,13 @@ final class ClaudeTracker {
             AXUIElementSetAttributeValue(el, "AXManualAccessibility" as CFString, kCFBooleanTrue)
             appEl = el
             inputEl = nil
+            toolbarEls = []
             loggedFind = false
         } else {
             pid = -1
             appEl = nil
             inputEl = nil
+            toolbarEls = []
         }
         return found
     }
@@ -89,9 +93,12 @@ final class ClaudeTracker {
         }
 
         // Fast path: cached element still alive — just re-read its frame.
+        // Re-reading the (typically 1-2) cached toolbar elements' frames here
+        // too is cheap compared to the full-window BFS that found them.
         if let el = inputEl, let f = axFrame(el), f.width >= 200 {
             let c = composer(for: el, inputFrame: f)
-            return Placement(inputFrame: f, anchorBottom: c.bottom, container: c.container)
+            return Placement(inputFrame: f, anchorBottom: c.bottom, container: c.container,
+                              toolbarCenterY: Self.centerY(of: toolbarEls))
         }
         inputEl = nil
 
@@ -103,12 +110,15 @@ final class ClaudeTracker {
 
         guard let (el, f) = Self.findInputArea(in: win) else { return nil }
         inputEl = el
+        toolbarEls = Self.findToolbarRow(in: win, inputFrame: f)
         if !loggedFind {
-            Log.write("input area found at \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))")
+            let ty = Self.centerY(of: toolbarEls).map(String.init) ?? "none"
+            Log.write("input area found at \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height)); toolbar centerY=\(ty) (\(toolbarEls.count) controls)")
             loggedFind = true
         }
         let c = composer(for: el, inputFrame: f)
-        return Placement(inputFrame: f, anchorBottom: c.bottom, container: c.container)
+        return Placement(inputFrame: f, anchorBottom: c.bottom, container: c.container,
+                          toolbarCenterY: Self.centerY(of: toolbarEls))
     }
 
     /// BFS for the chat input: a wide text area in the lower part of the window.
@@ -135,6 +145,51 @@ final class ClaudeTracker {
             queue.append(contentsOf: axElements(el, kAXChildrenAttribute))
         }
         return best.map { ($0.el, $0.frame) }
+    }
+
+    /// BFS for the toolbar row directly below the input text area: small
+    /// button-like controls (model/effort selector, mic, etc.) whose
+    /// horizontal span overlaps the input box and whose vertical position
+    /// sits just below it.
+    ///
+    /// This exists because anchoring to a geometrically-inferred "container
+    /// bottom" (see `composer(for:inputFrame:)`) turned out to be fragile:
+    /// the code and chat surfaces nest the composer differently, and the
+    /// chat surface has an extra ancestor reserved for the usage-limit
+    /// notice banner that satisfies the same height heuristic even when the
+    /// banner isn't showing, causing composer() to stop short of the real
+    /// toolbar. Reading the actual control positions directly sidesteps all
+    /// of that — it's correct on both surfaces and unaffected by whatever
+    /// banner state the composer is in, since there is no "which ancestor is
+    /// the right one" judgment call left to get wrong.
+    static func findToolbarRow(in window: AXUIElement, inputFrame f: CGRect) -> [AXUIElement] {
+        var queue: [AXUIElement] = [window]
+        var index = 0
+        var matches: [(AXUIElement, CGRect)] = []
+        while index < queue.count && queue.count < 6000 {
+            let el = queue[index]
+            index += 1
+            if let role = axString(el, kAXRoleAttribute),
+               role == "AXPopUpButton" || role == "AXButton",
+               let cf = axFrame(el),
+               cf.height >= 10, cf.height <= 40,          // toolbar-control-sized
+               cf.minY > f.maxY - 4, cf.minY <= f.maxY + 100,  // just below the input box
+               cf.maxX >= f.minX - 20, cf.minX <= f.maxX + 20 { // within the composer's own width
+                matches.append((el, cf))
+            }
+            queue.append(contentsOf: axElements(el, kAXChildrenAttribute))
+        }
+        return matches.map { $0.0 }
+    }
+
+    /// Average vertical center of a set of elements' live frames. Averaging
+    /// (rather than taking one element) keeps this stable whether the
+    /// surface exposes model+effort as one merged control or two separate
+    /// ones sitting at the same height.
+    static func centerY(of elements: [AXUIElement]) -> CGFloat? {
+        let ys = elements.compactMap { axFrame($0)?.midY }
+        guard !ys.isEmpty else { return nil }
+        return ys.reduce(0, +) / CGFloat(ys.count)
     }
 
     func containerBottom(for input: AXUIElement, inputFrame f: CGRect) -> CGFloat {
@@ -243,7 +298,19 @@ func runProbe() -> Never {
         print("\nCHOSEN input area: \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))")
         let tracker = ClaudeTracker()
         let bottom = tracker.containerBottom(for: el, inputFrame: f)
-        print("container bottom: \(Int(bottom)) (input bottom \(Int(f.maxY)), delta \(Int(bottom - f.maxY)))")
+        print("container bottom (fallback path): \(Int(bottom)) (input bottom \(Int(f.maxY)), delta \(Int(bottom - f.maxY)))")
+
+        let toolbarEls = ClaudeTracker.findToolbarRow(in: win, inputFrame: f)
+        if let ty = ClaudeTracker.centerY(of: toolbarEls) {
+            print("toolbar row (primary anchor): \(toolbarEls.count) control(s), centerY=\(Int(ty))")
+            for tel in toolbarEls {
+                if let tf = axFrame(tel) {
+                    print("  - [\(Int(tf.minX)),\(Int(tf.minY)) \(Int(tf.width))x\(Int(tf.height))]")
+                }
+            }
+        } else {
+            print("toolbar row: NOT FOUND — would fall back to container-bottom offset")
+        }
     } else {
         print("\nNO input area matched the heuristic")
     }

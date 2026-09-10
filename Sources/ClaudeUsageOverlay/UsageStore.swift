@@ -13,14 +13,19 @@ struct Tunables: Decodable, Equatable {
     var panelH: CGFloat = 30
     var sidePad: CGFloat = 4
     var scale: CGFloat = 1.0
-    // 2026-09-02: re-measured directly against the model/effort AXPopUpButton
-    // frames (y=924 h=23 -> center 935.5) after Claude.app 1.40609.1 shrank the
-    // composer toolbar band from 34px to 29px, which had pushed the overlay
-    // above the row it's meant to align with. Re-derive the same way if a
-    // future Claude update shifts this again: probe the live AX tree for the
-    // model-name/effort AXPopUpButton y+height, then
-    // centerAboveBottom = containerBottom - thatCenter.
-    var centerAboveBottom: CGFloat = 11.5  // 입력창 컨테이너 하단 → 오버레이 중심
+    // 2026-09-10: positioning now anchors directly to the model/effort
+    // AXPopUpButton row (ClaudeTracker.findToolbarRow), not to this offset —
+    // see directAnchorOffset below. centerAboveBottom only fires as a
+    // fallback on the rare tick where no toolbar control can be found at
+    // all, so it no longer needs to be kept in precise sync with Claude's
+    // layout; the value below is just the last real measurement, kept as a
+    // reasonable fallback rather than an arbitrary number.
+    var centerAboveBottom: CGFloat = 11.5  // 입력창 컨테이너 하단 → 오버레이 중심 (fallback 전용)
+
+    // Primary anchor: added on top of the toolbar row's own measured center.
+    // 0 means "exactly centered on the row", which is the intended default —
+    // this exists purely as a manual fine-tune escape hatch.
+    var directAnchorOffset: CGFloat = 0
 
     // Named instances of the variable font extracted from Claude.app, so the
     // overlay text matches the app's own UI face (its composer toolbar labels
@@ -52,7 +57,7 @@ struct Tunables: Decodable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case barW, groupGap, panelH, sidePad, scale, centerAboveBottom
+        case barW, groupGap, panelH, sidePad, scale, centerAboveBottom, directAnchorOffset
         case titleFont, valueFont, titleSize, valueSize, showModelLimits
         case warnAt, dangerAt, hideOnOverlap, overlapMargin
     }
@@ -68,6 +73,7 @@ struct Tunables: Decodable, Equatable {
         sidePad = try c.decodeIfPresent(CGFloat.self, forKey: .sidePad) ?? d.sidePad
         scale = try c.decodeIfPresent(CGFloat.self, forKey: .scale) ?? d.scale
         centerAboveBottom = try c.decodeIfPresent(CGFloat.self, forKey: .centerAboveBottom) ?? d.centerAboveBottom
+        directAnchorOffset = try c.decodeIfPresent(CGFloat.self, forKey: .directAnchorOffset) ?? d.directAnchorOffset
         titleFont = try c.decodeIfPresent(String.self, forKey: .titleFont) ?? d.titleFont
         valueFont = try c.decodeIfPresent(String.self, forKey: .valueFont) ?? d.valueFont
         titleSize = try c.decodeIfPresent(CGFloat.self, forKey: .titleSize) ?? d.titleSize

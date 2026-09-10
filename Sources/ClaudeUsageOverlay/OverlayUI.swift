@@ -175,7 +175,13 @@ final class OverlayController: NSObject {
 
         let t = store.tun
         let panelW = t.panelW(bars: store.barCount)
-        let centerYAX = placement.anchorBottom - t.centerAboveBottom
+        // Primary: the model/effort row's own measured center — correct on
+        // both the code and chat surfaces, and unaffected by the usage-limit
+        // notice banner shifting the composer's height. Falls back to the
+        // old container-offset estimate only on the rare tick where no
+        // toolbar control could be located at all.
+        let centerYAX = (placement.toolbarCenterY.map { $0 + t.directAnchorOffset })
+            ?? (placement.anchorBottom - t.centerAboveBottom)
         let topAX = centerYAX - t.panelH / 2
         let x = placement.inputFrame.midX - panelW / 2
 
