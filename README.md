@@ -72,7 +72,8 @@ open dist/ClaudeUsageOverlay.app
 | `groupGap` | 18 | 5h 그룹과 7d 그룹 사이 간격 |
 | `panelH` | 30 | 오버레이 전체 높이 |
 | `scale` | 1.0 | 전체 시각 배율 |
-| `centerAboveBottom` | 19 | 입력창 컨테이너 하단 → 오버레이 세로 중심 거리(px). 키우면 위로, 줄이면 아래로 이동 |
+| `directAnchorOffset` | 0 | 모델/effort 버튼 실제 중심선 기준 보정값(px). 양수 = 위로 |
+| `centerAboveBottom` | 11.5 | (fallback 전용) 버튼을 못 찾았을 때만 쓰이는 입력창 컨테이너 하단 기준 거리 |
 | `titleFont` | `AnthropicSansVariable-TextRegular` | "5h"/"7d" 라벨 폰트 (PostScript 이름) |
 | `valueFont` | `AnthropicSansVariable-TextRegular` | 퍼센트 수치 폰트 |
 | `titleSize` | 12 | 라벨 크기 |
@@ -82,6 +83,19 @@ open dist/ClaudeUsageOverlay.app
 | `dangerAt` | 90 | 이 % 이상이면 바가 빨강으로 |
 | `hideOnOverlap` | true | 툴바 컨트롤과 겹칠 자리면 숨김 (아래 참고) |
 | `overlapMargin` | 8 | 겹침 판정에 둘 좌우 여유(px) |
+
+### 세로 위치 앵커링
+
+오버레이는 "입력창 컨테이너 하단에서 N px 위"처럼 추측하지 않고, **접근성 트리에서
+모델/effort 선택 버튼을 직접 찾아 그 버튼의 실제 세로 중심선에 맞춘다**
+(`ClaudeTracker.findToolbarRow`). 코드 화면과 채팅 화면은 컴포저의 트리 구조가 달라서
+(채팅 화면엔 사용량 한도 안내 배너를 위한 자리가 하나 더 끼어 있다, 배너가 안 떠
+있어도), 컨테이너 경계를 기하학적으로 추측하는 옛 방식은 화면 종류나 배너 유무에 따라
+어긋날 수 있었다 — 실제 버튼 위치를 직접 읽으면 이 문제 자체가 없다.
+
+`directAnchorOffset`으로 이 결과를 미세 보정할 수 있고(기본 0 = 버튼과 정확히 같은
+높이), 버튼을 전혀 못 찾는 예외 상황에서만 `centerAboveBottom` 기반 추정으로
+폴백한다. `--probe`가 어느 버튼을 찾았는지, 몇 개인지, 폴백으로 빠졌는지까지 보여준다.
 
 ### 겹침 회피
 
